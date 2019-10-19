@@ -1,0 +1,39 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.window import Window
+from pyspark.sql.functions import lag, lead, first, last, desc, when
+from pyspark.sql.functions import udf
+import sys
+
+#Creating a spark session 
+spark = SparkSession \
+    .builder \
+    .appName("PySpark Notebook for AdEvents Analysis") \
+    .config("spark.some.config.option", "some-value") \
+    .getOrCreate()
+
+#reading the input events file
+inputEvents = spark.read.json("/Users/revanthnyalakonda/Downloads/ad-events/part-00000-732eeb74-f251-4f96-85d5-5c9ae95ba709-c000.txt")
+inputEvents.show()
+
+#filtering the null values in the visitorId column to eliminate events that are not useful
+filteredInputEvents = inputEvents.filter(inputEvents["visitorId"].isNotNull());
+filteredInputEvents.show()
+
+#Adding a new column nextPage with the pageUrl visited next by the user using lead function by creating a window to partition by visitor and orderby timestamp to see the user activity in order of timestamp
+outputEvents = filteredInputEvents.withColumn('nextPage', lead('pageUrl').over(
+    Window.partitionBy('visitorId').orderBy('timestamp')
+    )
+)
+outputEvents.show()
+
+#Creating a dataFrame with nextPageUrl column to add null value if the user doesn't have any next page activity
+outputEventsWithNextPage =outputEvents.withColumn( "nextPageUrl", when(
+    outputEvents["nextPage"].isNull(), 'null').otherwise(outputEvents["nextPage"]))
+
+#Dropping the nextPage column and saving the result file into the given path
+temp_data = outputEventsWithNextPage.drop(outputEventsWithNextPage.nextPage)
+
+#ordering the input events based on visitorId and timestamp in ascending order to group the visitor activity over timeperiod
+orderedOutputEvents = temp_data.orderBy("visitorId", "timestamp");
+orderedOutputEvents.show()
+orderedOutputEvents.coalesce(1).write.format('json').save('/Users/revanthnyalakonda/Downloads/ad-events/results')
